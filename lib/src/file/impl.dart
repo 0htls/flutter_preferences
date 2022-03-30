@@ -2,8 +2,8 @@ import 'dart:typed_data';
 
 import 'file.dart';
 
-class PreferenceFileImpl implements PreferencesFile {
-  factory PreferenceFileImpl({
+class PreferencesFileImpl implements PreferencesFile {
+  factory PreferencesFileImpl({
     required String name,
     String? homePath,
   }) {

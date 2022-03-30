@@ -5,25 +5,25 @@ import 'package:path/path.dart' as path;
 
 import 'file.dart';
 
-const _kPrefersFileSuffix = '.prefs';
+const _kPrefsFileSuffix = '.prefs';
 const _kScratchFileSuffix = '.prefs.tmp';
 
-class PreferenceFileImpl implements PreferencesFile {
-  PreferenceFileImpl._(
+class PreferencesFileImpl implements PreferencesFile {
+  PreferencesFileImpl._(
     this._home,
     this._prefsFile,
     this._scratchFile,
   );
 
-  factory PreferenceFileImpl({
+  factory PreferencesFileImpl({
     required String name,
     String? homePath,
   }) {
     assert(homePath != null);
-    final home = Directory(path.join(homePath!, 'prefs'));
-    final prefsFile = File(path.join(home.path, '$name$_kPrefersFileSuffix'));
+    final home = Directory(path.join(homePath!, 'preferences'));
+    final prefsFile = File(path.join(home.path, '$name$_kPrefsFileSuffix'));
     final scratchFile = File(path.join(home.path, '$name$_kScratchFileSuffix'));
-    return PreferenceFileImpl._(home, prefsFile, scratchFile);
+    return PreferencesFileImpl._(home, prefsFile, scratchFile);
   }
 
   final Directory _home;

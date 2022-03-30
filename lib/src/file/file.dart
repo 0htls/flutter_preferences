@@ -8,7 +8,7 @@ abstract class PreferencesFile {
   factory PreferencesFile({
     required String name,
     String? homePath,
-  }) = PreferenceFileImpl;
+  }) = PreferencesFileImpl;
 
   Future<Uint8List?> readBytes();
 

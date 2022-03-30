@@ -22,10 +22,11 @@ class PreferencesFileImpl implements PreferencesFile {
   @override
   Future<Uint8List?> readBytes() {
     final string = html.window.localStorage[_prefsKey];
-    if (string == null) {
-      return Future.value(null);
+    Uint8List? bytes;
+    if (string != null) {
+      bytes = base64.decoder.convert(string);
     }
-    return Future.value(base64.decoder.convert(string));
+    return Future.value(bytes);
   }
 
   @override
