@@ -4,51 +4,32 @@ import 'package:flutter/services.dart';
 
 import 'file/file.dart';
 import 'codec.dart';
-
-typedef PreferencesMap = Map<String, Object?>;
+import 'utils.dart';
 
 typedef Edit = FutureOr<void> Function(PreferencesEditor editor);
 
-class PreferencesEditor {
-  PreferencesEditor(this._prefsMap);
+class PreferencesFactory {
+  PreferencesFactory._();
 
-  PreferencesMap? _prefsMap;
+  static String? homePath;
 
-  T? get<T>(String key) {
-    return _prefsMap![key] as T?;
-  }
-
-  void put<T>(String key, T value) {
-    _prefsMap![key] = value;
-  }
-
-  T? remove<T>(String key) {
-    return _prefsMap!.remove(key) as T?;
-  }
-
-  bool containsKey(String key) {
-    return _prefsMap!.containsKey(key);
-  }
-
-  void clear() {
-    _prefsMap!.clear();
+  static Future<Preferences> create({
+    required String name,
+    String? path,
+    StandardMessageCodec codec = const StandardMessageCodec(),
+  }) async {
+    final prefs = Preferences._(
+      name: name,
+      codec: codec,
+      homePath: path ?? homePath,
+    );
+    await prefs._sync();
+    return prefs;
   }
 }
 
-class Preferences {
-  Preferences({
-    required this.name,
-    String? homePath,
-    this.codec = const StandardMessageCodec(),
-  }) : _file = PreferencesFile(name: name, homePath: homePath);
-
-  final String name;
-
-  final StandardMessageCodec codec;
-
-  final PreferencesFile _file;
-
-  var _prefsMap = <String, Object?>{};
+mixin _PreferencesMixin {
+  Map<String, Object?> get _prefsMap;
 
   bool containsKey(String key) {
     return _prefsMap.containsKey(key);
@@ -58,15 +39,71 @@ class Preferences {
     return _prefsMap[key] as T?;
   }
 
-  Future<void> edit(Edit callback) async {
-    final editor = PreferencesEditor(Map.of(_prefsMap));
-    await callback(editor);
-    await _file.writeBytes(codec.encodePrefsMap(editor._prefsMap!));
-    _prefsMap = editor._prefsMap!;
-    editor._prefsMap = null;
+  List<T>? getList<T>(String key) {
+    return (_prefsMap[key] as List?)?.cast();
   }
 
-  Future<void> sync() async {
+  Map<K, V>? getMap<K, V>(String key) {
+    return (_prefsMap[key] as Map?)?.cast();
+  }
+}
+
+class PreferencesEditor with _PreferencesMixin {
+  PreferencesEditor._fromPreferences(Preferences prefs)
+      : _prefsMap = Map.of(prefs._prefsMap);
+
+  @override
+  Map<String, Object?> _prefsMap;
+
+  void put<T>(String key, T value) {
+    _prefsMap[key] = value;
+  }
+
+  T? remove<T>(String key) {
+    return _prefsMap.remove(key) as T?;
+  }
+
+  void clear() {
+    _prefsMap.clear();
+  }
+
+  Map<String, Object?> _takePreferencesMap() {
+    final prefsMap = _prefsMap;
+    _prefsMap = const {};
+    return prefsMap;
+  }
+}
+
+class Preferences with _PreferencesMixin {
+  Preferences._({
+    required this.name,
+    String? homePath,
+    required this.codec,
+  }) : _file = PreferencesFile(name: name, homePath: homePath);
+
+  final String name;
+
+  final StandardMessageCodec codec;
+
+  final PreferencesFile _file;
+
+  // Make sure execution is serial.
+  final _taskQueue = TaskQueue();
+
+  @override
+  var _prefsMap = const <String, Object?>{};
+
+  Future<void> edit(Edit callback) async {
+    return _taskQueue.add(() async {
+      final editor = PreferencesEditor._fromPreferences(this);
+      await Future<void>.sync(() => callback(editor));
+      final result = editor._takePreferencesMap();
+      await _file.writeBytes(codec.encodePrefsMap(result));
+      _prefsMap = result;
+    });
+  }
+
+  Future<void> _sync() async {
     final bytes = await _file.readBytes();
     if (bytes == null) {
       return;
