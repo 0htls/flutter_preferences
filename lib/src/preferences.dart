@@ -1,17 +1,28 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
 import 'file/file.dart';
-import 'codec.dart';
-import 'utils.dart';
+import 'serialization.dart';
+import 'task_queue.dart';
 
 typedef Edit = FutureOr<void> Function(PreferencesEditor editor);
 
 class PreferencesFactory {
   PreferencesFactory._();
 
-  static String? homePath;
+  /// see [Preferences.instance].
+  static Future<void> initInstance({
+    String? path,
+    StandardMessageCodec codec = const StandardMessageCodec(),
+  }) async {
+    Preferences._instance = await PreferencesFactory.create(
+      name: 'flutter_preferences',
+      path: path,
+      codec: codec,
+    );
+  }
 
   static Future<Preferences> create({
     required String name,
@@ -21,7 +32,7 @@ class PreferencesFactory {
     final prefs = Preferences._(
       name: name,
       codec: codec,
-      homePath: path ?? homePath,
+      homePath: path,
     );
     await prefs._sync();
     return prefs;
@@ -67,10 +78,35 @@ class PreferencesEditor with _PreferencesMixin {
     _prefsMap.clear();
   }
 
-  Map<String, Object?> _takePreferencesMap() {
-    final prefsMap = _prefsMap;
+  Map<String, Object?> _done() {
+    final result = _prefsMap;
     _prefsMap = const {};
-    return prefsMap;
+    return result;
+  }
+}
+
+extension _PreferencesCodecExtension on StandardMessageCodec {
+  Uint8List encodePreferences(Map<String, Object?> prefsMap) {
+    final buffer = WriteBuffer();
+    buffer.putInt64(Preferences._version);
+    for (final entry in prefsMap.entries) {
+      writeValue(buffer, entry.key);
+      writeValue(buffer, entry.value);
+    }
+    final data = buffer.done();
+    return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+  }
+
+  Map<String, Object?> decodePreferences(Uint8List bytes) {
+    final buffer = ReadBuffer(bytes.buffer.asByteData(bytes.offsetInBytes, bytes.lengthInBytes));
+    if (buffer.hasRemaining) {
+      buffer.getInt64();
+    }
+    final map = <String, Object?>{};
+    while (buffer.hasRemaining) {
+      map[readValue(buffer) as String] = readValue(buffer);
+    }
+    return map;
   }
 }
 
@@ -80,6 +116,11 @@ class Preferences with _PreferencesMixin {
     String? homePath,
     required this.codec,
   }) : _file = PreferencesFile(name: name, homePath: homePath);
+
+  static Preferences? _instance;
+  static Preferences get instance => _instance!;
+
+  static const int _version = 0;
 
   final String name;
 
@@ -94,13 +135,18 @@ class Preferences with _PreferencesMixin {
   var _prefsMap = const <String, Object?>{};
 
   Future<void> edit(Edit callback) async {
-    return _taskQueue.add(() async {
+    final task = Task(() async {
       final editor = PreferencesEditor._fromPreferences(this);
-      await Future<void>.sync(() => callback(editor));
-      final result = editor._takePreferencesMap();
-      await _file.writeBytes(codec.encodePrefsMap(result));
-      _prefsMap = result;
+      final result = callback(editor);
+      if (result is Future<void>) {
+        await result;
+      }
+      final prefsMap = editor._done();
+      await _file.writeBytes(codec.encodePreferences(prefsMap));
+      _prefsMap = prefsMap;
     });
+    _taskQueue.add(task);
+    return task.future;
   }
 
   Future<void> _sync() async {
@@ -108,6 +154,6 @@ class Preferences with _PreferencesMixin {
     if (bytes == null) {
       return;
     }
-    _prefsMap = codec.decodePrefsMap(bytes);
+    _prefsMap = codec.decodePreferences(bytes);
   }
 }

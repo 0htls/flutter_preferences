@@ -1,28 +1,28 @@
 import 'dart:async';
 import 'dart:collection';
 
-class _Task {
-  _Task(this.callback);
+class Task {
+  Task(this._callback);
 
   final _completer = Completer<void>();
 
   Future<void> get future => _completer.future;
 
-  final Future<void> Function() callback;
+  final Future<void> Function() _callback;
 
-  void run() {
-    callback().then((value) => _completer.complete());
+  void _run() {
+    _callback().then((_) => _completer.complete());
   }
 }
 
 class TaskQueue {
-  final _pending = Queue<_Task>();
+  final _pending = Queue<Task>();
 
-  _Task? _current;
+  Task? _current;
 
-  void _runTask(_Task task) {
+  void _runTask(Task task) {
     _current = task;
-    task.run();
+    task._run();
     task.future.whenComplete(() {
       _current = null;
       if (_pending.isNotEmpty) {
@@ -31,13 +31,11 @@ class TaskQueue {
     });
   }
 
-  Future<void> add(Future<void> Function() callback) {
-    final task = _Task(callback);
+  void add(Task task) {
     if (_current == null) {
       _runTask(task);
     } else {
       _pending.add(task);
     }
-    return task.future;
   }
 }
