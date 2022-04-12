@@ -25,11 +25,18 @@ class PreferenceNotifier<T>
 
   final T defaultValue;
 
+  bool _isInitialized = false;
+
   T? _cache;
 
   @override
   T get() {
-    return _cache ?? prefs.get<T?>(key) ?? defaultValue;
+    if (!_isInitialized) {
+      _isInitialized = true;
+      _cache = prefs.get<T?>(key);
+    }
+
+    return _cache ?? defaultValue;
   }
 
   @override

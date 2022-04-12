@@ -34,7 +34,7 @@ class PreferencesFactory {
       codec: codec,
       homePath: path,
     );
-    await prefs._sync();
+    await prefs.sync();
     return prefs;
   }
 }
@@ -98,7 +98,8 @@ extension _PreferencesCodecExtension on StandardMessageCodec {
   }
 
   Map<String, Object?> decodePreferences(Uint8List bytes) {
-    final buffer = ReadBuffer(bytes.buffer.asByteData(bytes.offsetInBytes, bytes.lengthInBytes));
+    final buffer = ReadBuffer(
+        bytes.buffer.asByteData(bytes.offsetInBytes, bytes.lengthInBytes));
     if (buffer.hasRemaining) {
       buffer.getInt64();
     }
@@ -141,19 +142,23 @@ class Preferences with _PreferencesMixin {
       if (result is Future<void>) {
         await result;
       }
-      final prefsMap = editor._done();
-      await _file.writeBytes(codec.encodePreferences(prefsMap));
-      _prefsMap = prefsMap;
+      final newPrefsMap = editor._done();
+      await _file.writeBytes(codec.encodePreferences(newPrefsMap));
+      _prefsMap = newPrefsMap;
     });
     _taskQueue.add(task);
     return task.future;
   }
 
-  Future<void> _sync() async {
-    final bytes = await _file.readBytes();
-    if (bytes == null) {
-      return;
-    }
-    _prefsMap = codec.decodePreferences(bytes);
+  Future<void> sync() async {
+    final task = Task(() async {
+      final bytes = await _file.readBytes();
+      if (bytes == null) {
+        return;
+      }
+      _prefsMap = codec.decodePreferences(bytes);
+    });
+    _taskQueue.add(task);
+    return task.future;
   }
 }
