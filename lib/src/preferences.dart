@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/services.dart';
-
 import 'file/file.dart';
 import 'serialization.dart';
 import 'task_queue.dart';
@@ -15,7 +13,7 @@ class PreferencesFactory {
   /// see [Preferences.instance].
   static Future<void> initInstance({
     String? path,
-    StandardMessageCodec codec = const StandardMessageCodec(),
+    StandardCodec codec = const StandardCodec(),
   }) async {
     Preferences._instance = await PreferencesFactory.create(
       name: 'flutter_preferences',
@@ -27,7 +25,7 @@ class PreferencesFactory {
   static Future<Preferences> create({
     required String name,
     String? path,
-    StandardMessageCodec codec = const StandardMessageCodec(),
+    StandardCodec codec = const StandardCodec(),
   }) async {
     final prefs = Preferences._(
       name: name,
@@ -39,53 +37,152 @@ class PreferencesFactory {
   }
 }
 
+abstract class PreferenceKey<R, P> {
+  const PreferenceKey({
+    required this.key,
+    required this.defaultValue,
+  });
+
+  final String key;
+
+  final R defaultValue;
+
+  R from(P value);
+
+  P to(R value);
+
+  bool updateShouldNotify(R oldValue, R newValue) {
+    return oldValue != newValue;
+  }
+
+  @override
+  String toString() {
+    return '$runtimeType($key)';
+  }
+
+  @override
+  int get hashCode => key.hashCode;
+
+  @override
+  bool operator ==(Object other) {
+    return other is PreferenceKey && key == other.key;
+  }
+}
+
+class PrimitivePreferenceKey<R> extends PreferenceKey<R, R> {
+  const PrimitivePreferenceKey({
+    required super.key,
+    required super.defaultValue,
+  });
+
+  @override
+  R from(R value) => value;
+
+  @override
+  R to(R value) => value;
+}
+
+typedef IntPreferenceKey = PrimitivePreferenceKey<int>;
+typedef DoublePreferenceKey = PrimitivePreferenceKey<double>;
+typedef BoolPreferenceKey = PrimitivePreferenceKey<bool>;
+typedef StringPreferenceKey = PrimitivePreferenceKey<String>;
+
+class StringListPreferenceKey
+    extends PreferenceKey<List<String>, List<Object?>> {
+  const StringListPreferenceKey({
+    required super.key,
+    required super.defaultValue,
+  });
+
+  @override
+  List<String> from(List<Object?> value) {
+    return value.cast();
+  }
+
+  @override
+  List<Object?> to(List<String> value) {
+    return value;
+  }
+}
+
+class StringMapPreferenceKey
+    extends PreferenceKey<Map<String, String>, Map<Object?, Object?>> {
+  const StringMapPreferenceKey({
+    required super.key,
+    required super.defaultValue,
+  });
+
+  @override
+  Map<String, String> from(Map<Object?, Object?> value) {
+    return value.cast();
+  }
+
+  @override
+  Map<Object?, Object?> to(Map<String, String> value) {
+    return value;
+  }
+}
+
 mixin _PreferencesMixin {
   Map<String, Object?> get _prefsMap;
 
-  bool containsKey(String key) {
-    return _prefsMap.containsKey(key);
+  int get length => _prefsMap.length;
+
+  bool containsKey(PreferenceKey<Object?, Object?> key) {
+    return _prefsMap.containsKey(key.key);
   }
 
-  T? get<T>(String key) {
-    return _prefsMap[key] as T?;
-  }
-
-  List<T>? getList<T>(String key) {
-    return (_prefsMap[key] as List?)?.cast();
-  }
-
-  Map<K, V>? getMap<K, V>(String key) {
-    return (_prefsMap[key] as Map?)?.cast();
+  R get<R, P>(PreferenceKey<R, P> key) {
+    if (!_prefsMap.containsKey(key.key)) {
+      return key.defaultValue;
+    }
+    return key.from(_prefsMap[key.key] as P);
   }
 }
 
 class PreferencesEditor with _PreferencesMixin {
   PreferencesEditor._fromPreferences(Preferences prefs)
-      : _prefsMap = Map.of(prefs._prefsMap);
+      : _prefsMap = prefs._prefsMap;
 
   @override
   Map<String, Object?> _prefsMap;
 
-  void put<T>(String key, T value) {
-    _prefsMap[key] = value;
+  bool _forceUpdate = false;
+
+  final _updatedKeys = <PreferenceKey<Object?, Object?>>{};
+
+  void put<R, P>(PreferenceKey<R, P> key, R newValue) {
+    if (_prefsMap.containsKey(key.key)) {
+      final oldValue = key.from(_prefsMap[key.key] as P);
+      if (key.updateShouldNotify(oldValue, newValue)) {
+        _updatedKeys.add(key);
+      }
+    } else {
+      _updatedKeys.add(key);
+    }
+    _prefsMap[key.key] = key.to(newValue);
   }
 
-  T? remove<T>(String key) {
-    return _prefsMap.remove(key) as T?;
+  void remove<T>(PreferenceKey<Object?, Object?> key) {
+    if (_prefsMap.containsKey(key.key)) {
+      _updatedKeys.add(key);
+      _prefsMap.remove(key.key);
+    }
   }
 
   void clear() {
+    if (_prefsMap.isNotEmpty) {
+      _forceUpdate = true;
+    }
     _prefsMap.clear();
   }
 
-  Map<String, Object?> _done() {
-    final result = _prefsMap;
+  void _done() {
     _prefsMap = const {};
-    return result;
   }
 }
 
-extension _PreferencesCodecExtension on StandardMessageCodec {
+extension _PreferencesCodecExtension on StandardCodec {
   Uint8List encodePreferences(Map<String, Object?> prefsMap) {
     final buffer = WriteBuffer();
     buffer.putInt64(Preferences._version);
@@ -111,6 +208,14 @@ extension _PreferencesCodecExtension on StandardMessageCodec {
   }
 }
 
+class PreferencesEvent {
+  PreferencesEvent(this.forceUpdate, this.updatedKeys);
+
+  final bool forceUpdate;
+
+  final Set<PreferenceKey<Object?, Object?>> updatedKeys;
+}
+
 class Preferences with _PreferencesMixin {
   Preferences._({
     required this.name,
@@ -125,7 +230,7 @@ class Preferences with _PreferencesMixin {
 
   final String name;
 
-  final StandardMessageCodec codec;
+  final StandardCodec codec;
 
   final PreferencesFile _file;
 
@@ -133,7 +238,32 @@ class Preferences with _PreferencesMixin {
   final _taskQueue = TaskQueue();
 
   @override
-  var _prefsMap = const <String, Object?>{};
+  var _prefsMap = <String, Object?>{};
+
+  StreamController<PreferencesEvent>? _controller;
+
+  Stream<PreferencesEvent> get events {
+    _controller ??= StreamController<PreferencesEvent>(
+      onCancel: () {
+        _controller?.close();
+        _controller = null;
+      },
+    );
+    return _controller!.stream;
+  }
+
+  void _dispatchEvent(PreferencesEditor editor) {
+    if (_controller == null) {
+      return;
+    }
+
+    if (editor._forceUpdate || editor._updatedKeys.isNotEmpty) {
+      _controller!.add(PreferencesEvent(
+        editor._forceUpdate,
+        editor._updatedKeys,
+      ));
+    }
+  }
 
   Future<void> edit(Edit callback) async {
     final task = Task(() async {
@@ -142,9 +272,9 @@ class Preferences with _PreferencesMixin {
       if (result is Future<void>) {
         await result;
       }
-      final newPrefsMap = editor._done();
-      await _file.writeBytes(codec.encodePreferences(newPrefsMap));
-      _prefsMap = newPrefsMap;
+      editor._done();
+      await _file.writeBytes(codec.encodePreferences(_prefsMap));
+      _dispatchEvent(editor);
     });
     _taskQueue.add(task);
     return task.future;
